@@ -148,12 +148,11 @@ app.get('/getByProductMarketLatest', async (req, res) => {
       .orderBy('createdAt')
       .limit(1)
       .get();
-      console.log(snapshot.docs)
+    console.log(snapshot.docs);
     if (!snapshot) {
       res.status(200).send({ data: 'no matching products' });
     } else {
       const list = snapshot.docs.map((doc) => {
-        console.log({ doc });
         return {
           id: doc.id,
           ...doc.data(),
@@ -162,14 +161,14 @@ app.get('/getByProductMarketLatest', async (req, res) => {
       res.status(200).send({ data: list });
     }
   } catch (e) {
-    console.log({e})
+    console.log({ e });
     res.status(400).send(e);
   }
 });
 
 app.get('/getByProductMarketDate', async (req, res) => {
   const data = req.body;
-  if(!data.date) data.date = Date.now()
+  if (!data.date) data.date = Date.now();
   const dateStamp = firebase.firestore.Timestamp.fromDate(new Date(data.date));
   try {
     const snapshot = await prices
@@ -246,6 +245,60 @@ app.get('/pricesByUser', async (req, res) => {
       }
       for (let val of list) {
         console.log({ val });
+        if (val.market && val.product && val.price) {
+          let ind = indObj[val.market.name];
+          tableObj[val.product.name][ind] = val.price;
+        }
+      }
+      return res.json({ tableObj });
+    }
+  } catch (e) {
+    res.status(400).json({ e });
+  }
+});
+
+app.get('/pricesByUserDate', async (req, res) => {
+  const user_id = req.query.user_id;
+  const dateStamp = firebase.firestore.Timestamp.fromDate(
+    new Date(req.query.date)
+  );
+  let ms = new Date(req.query.date).getTime() + 86400000;
+  let tomorrow = firebase.firestore.Timestamp.fromDate(new Date(ms));
+  let headers = [];
+  let products = [];
+  let tableObj = {};
+  try {
+    const snapshot = await prices
+      .where('userId', '==', user_id)
+      .where('createdAt', '>', dateStamp)
+      .where('createdAt', '<', tomorrow)
+      .get();
+    if (snapshot.docs.length === 0) {
+      res.status(200).send({ data: 'no matching prices' });
+    } else {
+      const list = snapshot.docs.map((doc) => {
+        if (!headers.includes(doc.data().market.name))
+          headers.push(doc.data().market.name);
+        if (!products.includes(doc.data().product.name))
+          products.push(doc.data().product.name);
+        if (!tableObj[doc.data().product.name])
+          tableObj[doc.data().product.name] = [];
+        return {
+          market: doc.data().market,
+          product: doc.data().product,
+          price: doc.data().retailPrice,
+        };
+      });
+      tableObj['headers'] = headers;
+      let indObj = {};
+      headers.map((item, index) => (indObj[item] = index));
+      for (let mkt of Object.keys(tableObj)) {
+        if (mkt !== 'headers') {
+          let zeros = new Array(headers.length).fill(0);
+          tableObj[mkt] = zeros;
+        }
+      }
+      for (let val of list) {
         if (val.market && val.product && val.price) {
           let ind = indObj[val.market.name];
           tableObj[val.product.name][ind] = val.price;
