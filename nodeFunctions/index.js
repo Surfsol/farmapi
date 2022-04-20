@@ -2,7 +2,7 @@ const express = require('express');
 const cors = require('cors')({ origin: true });
 const app = express();
 const firebase = require('firebase/app');
-const { prices, accounts, products, markets } = require('./firebase-config');
+const { prices, accounts, products, markets, countries, districts } = require('./firebase-config');
 
 // // TODO: Add SDKs for Firebase products that you want to use
 // // https://firebase.google.com/docs/web/setup#available-libraries
@@ -17,6 +17,9 @@ const { prices, accounts, products, markets } = require('./firebase-config');
 // Get historicalPrice (from market/product, specify date) // find price, market , date
 // Get timeFramePrice (from market/product) ??  every date with a price
 // Get coverage (product, markets, districts) ??  product prices
+
+
+// get prices ? market / product / country / district / on date / less than day / greater than day / 
 
 app.use(express.json());
 app.use(cors);
@@ -36,6 +39,32 @@ app.post('/add_account', async (req, res) => {
 app.get('/markets', async (req, res) => {
   try {
     const snapshot = await markets.get();
+    const list = snapshot.docs.map((doc) => ({
+      id: doc.id,
+      ...doc.data(),
+    }));
+    res.status(200).send(list);
+  } catch (e) {
+    res.status(400).res.send(e);
+  }
+});
+
+app.get('/countries', async (req, res) => {
+  try {
+    const snapshot = await countries.get();
+    const list = snapshot.docs.map((doc) => ({
+      id: doc.id,
+      ...doc.data(),
+    }));
+    res.status(200).send(list);
+  } catch (e) {
+    res.status(400).res.send(e);
+  }
+});
+
+app.get('/districts', async (req, res) => {
+  try {
+    const snapshot = await districts.get();
     const list = snapshot.docs.map((doc) => ({
       id: doc.id,
       ...doc.data(),
@@ -71,7 +100,7 @@ app.get('/prices', async (req, res) => {
 
 app.get('/pricesById', async (req, res) => {
   const user_id = req.query.user_id;
-  try {
+  try { 
     const snapshot = await prices.where('userId', '==', user_id).get();
     const list = snapshot.docs.map((doc) => ({
       id: doc.id,
@@ -126,10 +155,13 @@ app.get('/getByProductMarket', async (req, res) => {
     if (snapshot.docs.length === 0) {
       res.status(200).send({ data: 'no matching products in that market' });
     } else {
-      const list = snapshot.docs.map((doc) => {
+      const list = snapshot.docs.map((doc) => {     
         return {
           id: doc.id,
-          ...doc.data(),
+          market: doc.data().market.name,
+          product: doc.data().product.name,
+          retailPrice: doc.data().retailPrice,
+          date:  new Date(doc.data().createdAt.seconds*1000)
         };
       });
       res.status(200).send({ data: list });
@@ -145,7 +177,7 @@ app.get('/getByProductMarketLatest', async (req, res) => {
     const snapshot = await prices
       .where('product.id', '==', data.productId)
       .where('market.id', '==', data.marketId)
-      .orderBy('createdAt')
+      .orderBy('createdAt', 'desc')
       .limit(1)
       .get();
     console.log(snapshot.docs);
@@ -175,7 +207,7 @@ app.get('/getByProductMarketDate', async (req, res) => {
       .where('product.id', '==', data.productId)
       .where('market.id', '==', data.marketId)
       .where('createdAt', '<=', dateStamp)
-      .orderBy('createdAt')
+      .orderBy('createdAt', 'desc')
       .limit(1)
       .get();
     if (!snapshot) {
