@@ -1,12 +1,8 @@
 const express = require('express');
 const cors = require('cors')({ origin: true });
 const app = express();
-const {
-  prices,
-  accounts,
-  products,
-  markets,
-} = require('./firebase-config');
+const firebase = require('firebase/app');
+const { prices, accounts, products, markets } = require('./firebase-config');
 
 // // TODO: Add SDKs for Firebase products that you want to use
 // // https://firebase.google.com/docs/web/setup#available-libraries
@@ -16,10 +12,11 @@ const {
 // Get countries
 // Get products
 // Get product categories** Does not exist
-// Get latestPrice (from market/product, product, or market)
-// Get historicalPrice (from market/product, specify date)
-// Get timeFramePrice (from market/product) ??
-// Get coverage (product, markets, regions) ??
+// Get latestPrice (from market/product, product, or market) - maxDate in sql
+
+// Get historicalPrice (from market/product, specify date) // find price, market , date
+// Get timeFramePrice (from market/product) ??  every date with a price
+// Get coverage (product, markets, districts) ??  product prices
 
 app.use(express.json());
 app.use(cors);
@@ -72,6 +69,20 @@ app.get('/prices', async (req, res) => {
   }
 });
 
+app.get('/pricesById', async (req, res) => {
+  const user_id = req.query.user_id;
+  try {
+    const snapshot = await prices.where('userId', '==', user_id).get();
+    const list = snapshot.docs.map((doc) => ({
+      id: doc.id,
+      ...doc.data(),
+    }));
+    res.status(200).send(list);
+  } catch (e) {
+    res.status(400).res.send(e);
+  }
+});
+
 app.post('/add_prices', async (req, res) => {
   const data = req.body;
   prices
@@ -105,13 +116,68 @@ app.post('/add_product', async (req, res) => {
     .catch((e) => res.status(400).send(e));
 });
 
-app.get('/get_latest_price', async (req, res) => {
+app.get('/getByProductMarket', async (req, res) => {
   const data = req.body;
   try {
     const snapshot = await prices
-      .where('productId', '==', data.productId)
-      .where('marketId', '==', data.marketId)
-      // .orderBy('createdAt').get()
+      .where('product.id', '==', data.productId)
+      .where('market.id', '==', data.marketId)
+      .get();
+    if (snapshot.docs.length === 0) {
+      res.status(200).send({ data: 'no matching products in that market' });
+    } else {
+      const list = snapshot.docs.map((doc) => {
+        return {
+          id: doc.id,
+          ...doc.data(),
+        };
+      });
+      res.status(200).send({ data: list });
+    }
+  } catch (e) {
+    res.status(400).send(e);
+  }
+});
+
+app.get('/getByProductMarketLatest', async (req, res) => {
+  const data = req.body;
+  try {
+    const snapshot = await prices
+      .where('product.id', '==', data.productId)
+      .where('market.id', '==', data.marketId)
+      .orderBy('createdAt')
+      .limit(1)
+      .get();
+      console.log(snapshot.docs)
+    if (!snapshot) {
+      res.status(200).send({ data: 'no matching products' });
+    } else {
+      const list = snapshot.docs.map((doc) => {
+        console.log({ doc });
+        return {
+          id: doc.id,
+          ...doc.data(),
+        };
+      });
+      res.status(200).send({ data: list });
+    }
+  } catch (e) {
+    console.log({e})
+    res.status(400).send(e);
+  }
+});
+
+app.get('/getByProductMarketDate', async (req, res) => {
+  const data = req.body;
+  if(!data.date) data.date = Date.now()
+  const dateStamp = firebase.firestore.Timestamp.fromDate(new Date(data.date));
+  try {
+    const snapshot = await prices
+      .where('product.id', '==', data.productId)
+      .where('market.id', '==', data.marketId)
+      .where('createdAt', '<=', dateStamp)
+      .orderBy('createdAt')
+      .limit(1)
       .get();
     if (!snapshot) {
       res.status(200).send({ data: 'no matching products' });
@@ -131,7 +197,6 @@ app.get('/get_latest_price', async (req, res) => {
 });
 
 app.get('/get_price', async (req, res) => {
-  // const pricesRef = db.collection('prices');
   const snapshot = await price
     .where('productId', '==', '2d0c2810-b302-11eb-9427-27c569a8e293')
     .get();
@@ -139,10 +204,56 @@ app.get('/get_price', async (req, res) => {
     console.log('No matching documents.');
     return;
   }
-
   snapshot.forEach((doc) => {
     console.log(doc.id, '=>', doc.data());
   });
 });
 
-
+app.get('/pricesByUser', async (req, res) => {
+  const user_id = req.query.user_id;
+  // const date = req.query.date;
+  // const dateStamp = firebase.firestore.Timestamp.fromDate(new Date());
+  // const today = Date.now().toString();
+  let headers = [];
+  let products = [];
+  let tableObj = {};
+  try {
+    const snapshot = await prices.where('userId', '==', user_id).get();
+    if (!snapshot) {
+      res.status(200).send({ data: 'no matching prices' });
+    } else {
+      const list = snapshot.docs.map((doc) => {
+        if (!headers.includes(doc.data().market.name))
+          headers.push(doc.data().market.name);
+        if (!products.includes(doc.data().product.name))
+          products.push(doc.data().product.name);
+        if (!tableObj[doc.data().product.name])
+          tableObj[doc.data().product.name] = [];
+        return {
+          market: doc.data().market,
+          product: doc.data().product,
+          price: doc.data().retailPrice,
+        };
+      });
+      tableObj['headers'] = headers;
+      let indObj = {};
+      headers.map((item, index) => (indObj[item] = index));
+      for (let mkt of Object.keys(tableObj)) {
+        if (mkt !== 'headers') {
+          let zeros = new Array(headers.length).fill(0);
+          tableObj[mkt] = zeros;
+        }
+      }
+      for (let val of list) {
+        console.log({ val });
+        if (val.market && val.product && val.price) {
+          let ind = indObj[val.market.name];
+          tableObj[val.product.name][ind] = val.price;
+        }
+      }
+      return res.json({ tableObj });
+    }
+  } catch (e) {
+    res.status(400).json({ e });
+  }
+});
